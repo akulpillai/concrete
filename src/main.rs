@@ -1,73 +1,94 @@
 use std::env;
+use std::error;
 
 // Debugger Stuff
-use nix::unistd::{fork, ForkResult};
-use nix::sys::ptrace::{traceme, step};
-use nix::sys::wait::{wait, WaitStatus};
+use nix::unistd::{fork, ForkResult, Pid};
+use nix::sys::ptrace;
+use nix::sys::wait::{waitpid, WaitStatus, WaitPidFlag};
 use nix::sys::signal::Signal;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::os::unix::process::CommandExt;
+use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 // use std::ffi::{CString, CStr};
 
-// ignoring program args for now
-fn run_target(prog: &String, _progargs: &Vec<String>) {
-    println!("Executing {}", prog);
-
-    traceme().expect("Ptrace Failed");
-
-    // Don't care for the output
-    // Benchmarking right now
-    Command::new(prog).exec();
-
-    // CStr stuff for nix execv
-    // prog.push('\x00');
-    // let prog = &prog.into_bytes();
-    // let progname = CStr::from_bytes_with_nul(prog)
-    //     .expect("Could not Construct CStr");
+// TODO: change result to WaitStatus
+struct Debugger {
+    pid:  Pid,
 }
 
-fn run_debugger() {
-    let mut wait_status = wait();
-    let mut counter: usize = 0;
-
-    loop {
-        counter += 1;
-        match wait_status {
-            Ok(WaitStatus::Stopped(pid, _))=> {
-                if let Err(e) = step(pid, Signal::SIGCONT){
-                    println!("Step Error {}", e);
-                    break;
-                };
-            },
-            Ok(status) => {
-                println!("{:?}", status);
-                break;
+impl Debugger {
+    pub fn launch(prog: &String, args: &[String])
+                  -> Result<Debugger, Box<dyn error::Error>> {
+        match fork() {
+            Ok(ForkResult::Parent { child, .. }) => {
+                let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
+                let pid = wait_status.pid().unwrap();
+                return Ok(
+                    Debugger { pid }
+                )
+            }
+            Ok(ForkResult::Child) => {
+                return Err(Box::new(Debugger::run_target(prog, args)))
             },
             Err(e) => {
-                println!("Wait Error {}", e)
-            }
+                eprintln!("Fork failed");
+                return Err(Box::new(e))
+            },
         }
-        wait_status = wait();
     }
-    println!("Inscount: {}", counter);
+
+    fn pid(&self) -> Pid { self.pid }
+
+    fn run_target(prog: &String, progargs: &[String]) -> std::io::Error {
+        eprintln!("Executing {}", prog);
+
+        ptrace::traceme().expect("Ptrace Failed");
+
+        // Disable ASLR
+        personality(ADDR_NO_RANDOMIZE).expect("Could not disable ASLR");
+
+        // Don't care for the output
+        let err = Command::new(prog)
+            .args(progargs)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .exec();
+
+        // Function will only return if there is an error
+        eprintln!("Execution Failed: {}", err);
+        err
+    }
+
+    fn step(&self) -> Result<WaitStatus, Box<dyn std::error::Error>> {
+        ptrace::step(self.pid(), None)?;
+        let status = waitpid(self.pid(), None)?;
+        Ok(status)
+    }
 }
 
-fn main() {
+
+fn main() -> Result<(), Box<dyn error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        println!("No Binary Provided");
-        return
+        eprintln!("No Binary Provided");
+        return Ok(())
     }
 
-    match fork() {
-        Ok(ForkResult::Parent { child, .. }) => {
-            println!("[*] Executing Debugger, Child PID: {}", child);
-            run_debugger();
-        }
-        Ok(ForkResult::Child) => {
-            run_target(&args[1].clone(), &args[2..].to_vec());
-        },
-        Err(_) => println!("Fork failed"),
-    }
+    let dbg = Debugger::launch(&args[1], &args[2..])?;
+    let mut counter: usize = 0;
+
+    loop{
+         counter += 1;
+         match dbg.step() {
+             Ok(WaitStatus::Exited(pid, _)) => {
+                 println!("Process Exited {}", pid);
+                 break
+             }
+             _ => {},
+         }
+     }
+
+    println!("Inscount {}", counter);
+    Ok(())
 }
