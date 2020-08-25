@@ -13,29 +13,33 @@ fn main() -> Result<(), DebugError> {
         return Ok(());
     }
 
-    let dbg = Debugger::launch(&args[1], &args[2..])?;
-    let mut counter: usize = 0;
+    let mut dbg = Debugger::launch(&args[1], &args[2..])?;
 
-    loop {
-        counter += 1;
-        match dbg.step() {
-            Ok(WaitStatus::Exited(pid, _)) => {
-                println!("Process Exited {}", pid);
-                break;
-            }
-            Ok(WaitStatus::Stopped(_, _)) => {
-                continue;
-            }
-            Ok(status) => {
-                eprintln!("Interuppted by unexpected status: {:?}", status);
-                break;
-            }
-            Err(e) => {
-                eprintln!("Error while stepping: {}", e);
-            }
-        }
-    }
+    dbg.set_breakpoint(0x0000000000400c56)?;
+    dbg.unpause()?;
+    dbg.resume()?;
 
-    println!("Inscount {}", counter);
+    // let mut counter: usize = 0;
+    // loop {
+    //     counter += 1;
+    //     match dbg.step() {
+    //         Ok(WaitStatus::Exited(pid, _)) => {
+    //             println!("Process Exited {}", pid);
+    //             break;
+    //         }
+    //         Ok(WaitStatus::Stopped(_, _)) => {
+    //             continue;
+    //         }
+    //         Ok(status) => {
+    //             eprintln!("Interuppted by unexpected status: {:?}", status);
+    //             break;
+    //         }
+    //         Err(e) => {
+    //             eprintln!("Error while stepping: {}", e);
+    //         }
+    //     }
+    // }
+
+    // println!("Inscount {}", counter);
     Ok(())
 }
