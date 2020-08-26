@@ -1,11 +1,13 @@
+use anyhow::Result;
 use std::env;
 
-use nix::sys::wait::WaitStatus;
+// use nix::sys::wait::WaitStatus;
 
 mod debugger;
-use debugger::{DebugError, Debugger};
 
-fn main() -> Result<(), DebugError> {
+use debugger::Debugger;
+
+fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {

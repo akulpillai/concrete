@@ -1,7 +1,4 @@
-use derive_more::Display;
-use log::error;
-use std::error;
-// Debugger Stuff
+use anyhow::{anyhow, Context, Result};
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 use nix::sys::ptrace;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -11,40 +8,24 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 // use std::ffi::{CString, CStr};
 
-#[derive(Display, Debug)]
-pub enum DebugError {
-    #[display(fmt = "Failed during Ptrace")]
-    PtraceError,
-    #[display(fmt = "Failed during Wait")]
-    WaitError,
-    #[display(fmt = "Failed to launch application")]
-    LaunchError,
-}
-
-impl error::Error for DebugError {}
-
 pub struct Debugger {
     pid: Pid,
     breakpoints: HashMap<u64, u64>,
 }
 
 impl Debugger {
-    pub fn launch(prog: &String, args: &[String]) -> Result<Debugger, DebugError> {
+    pub fn launch(prog: &str, args: &[String]) -> Result<Debugger> {
         match fork() {
             Ok(ForkResult::Parent { child, .. }) => {
-                let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))
-                    .map_err(|_| DebugError::WaitError)?;
-                let pid = wait_status.pid().unwrap(); //TODO: remove unwrap()
-                return Ok(Debugger {
+                let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
+                let pid = wait_status.pid().unwrap(); //TODO: Fix this
+                Ok(Debugger {
                     pid,
                     breakpoints: HashMap::new(),
-                });
+                })
             }
-            Ok(ForkResult::Child) => return Err(Debugger::run_target(prog, args)),
-            Err(_) => {
-                eprintln!("Fork failed");
-                return Err(DebugError::LaunchError);
-            }
+            Ok(ForkResult::Child) => Err(Debugger::run_target(prog, args)),
+            Err(_) => Err(anyhow!("Fork failed")),
         }
     }
 
@@ -52,15 +33,17 @@ impl Debugger {
         &self.pid
     }
 
-    fn run_target(prog: &String, progargs: &[String]) -> DebugError {
-        eprintln!("Executing {}", prog);
-
-        ptrace::traceme().expect("Ptrace Failed");
+    fn run_target(prog: &str, progargs: &[String]) -> anyhow::Error {
+        if ptrace::traceme().is_err() {
+            return anyhow!("Failed to start ptrace");
+        }
 
         // Disable ASLR
-        personality(ADDR_NO_RANDOMIZE).expect("Could not disable ASLR");
+        if personality(ADDR_NO_RANDOMIZE).is_err() {
+            return anyhow!("Failed to disable ASLR");
+        }
 
-        // Don't care for the output
+        // TODO: Don't care for the output
         let err = Command::new(prog)
             .args(progargs)
             // .stdout(Stdio::null())
@@ -68,66 +51,65 @@ impl Debugger {
             .exec();
 
         // Function will only return if there is an error
-        eprintln!("Execution Failed: {}", err);
-        DebugError::LaunchError
+        anyhow!("Execution Failed: {}", err)
     }
 
-    pub fn step(&self) -> Result<WaitStatus, DebugError> {
-        ptrace::step(*self.pid(), None).map_err(|_| DebugError::PtraceError)?;
-        let status = waitpid(*self.pid(), None).map_err(|_| DebugError::WaitError)?;
+    pub fn step(&self) -> Result<WaitStatus> {
+        ptrace::step(*self.pid(), None)?;
+        let status = waitpid(*self.pid(), None)?;
         Ok(status)
     }
 
-    // To be only the first time after attaching,
+    // To be only used the first time after attaching,
     // if breakpoints are hit call resume()
-    pub fn unpause(&self) -> Result<WaitStatus, DebugError> {
-        ptrace::cont(*self.pid(), None).map_err(|_| DebugError::PtraceError)?;
-        let status = waitpid(*self.pid(), None).map_err(|_| DebugError::WaitError)?;
+    pub fn unpause(&self) -> Result<WaitStatus> {
+        ptrace::cont(*self.pid(), None)?;
+        let status = waitpid(*self.pid(), None)?;
         Ok(status)
     }
 
-    pub fn resume(&mut self) -> Result<WaitStatus, DebugError> {
-        // Subtract RIP and continue
-        let mut regs = ptrace::getregs(*self.pid()).map_err(|_| DebugError::PtraceError)?;
+    pub fn resume(&mut self) -> Result<WaitStatus> {
+        // Subtract RIP and unpause
+        let mut regs = ptrace::getregs(*self.pid())?;
         regs.rip -= 1;
         self.disable_breakpoint(&regs.rip)?;
-        ptrace::setregs(*self.pid(), regs).map_err(|_| DebugError::PtraceError)?;
+        ptrace::setregs(*self.pid(), regs)?;
         Ok(self.unpause()?)
     }
 
-    pub fn read(&self, addr: &u64) -> Result<u64, DebugError> {
-        let value = ptrace::read(*self.pid(), *addr as *mut std::ffi::c_void)
-            .map_err(|_| DebugError::PtraceError)?;
+    pub fn read(&self, addr: &u64) -> Result<u64> {
+        let value = ptrace::read(*self.pid(), *addr as *mut std::ffi::c_void)?;
         Ok(value as u64)
     }
 
-    pub fn write(&self, addr: &u64, value: u64) -> Result<(), DebugError> {
+    pub fn write(&self, addr: &u64, value: u64) -> Result<()> {
         unsafe {
             ptrace::write(
                 *self.pid(),
                 *addr as *mut std::ffi::c_void,
                 value as *mut std::ffi::c_void,
-            )
-            .map_err(|_| DebugError::PtraceError)?;
+            )?;
         }
         Ok(())
     }
-    // Returns Breakpoint
-    pub fn set_breakpoint(&mut self, addr: u64) -> Result<(), DebugError> {
-        let original_value = self.read(&addr)?;
+
+    pub fn set_breakpoint(&mut self, addr: u64) -> Result<()> {
+        let original_value = self
+            .read(&addr)
+            .context("Failed to read at breakpoint address")?;
         self.breakpoints.insert(addr, original_value);
         self.write(&addr, original_value & 0xFFFFFFFFFFFFFF00 | 0xCC)?;
         Ok(())
     }
 
-    pub fn disable_breakpoint(&mut self, addr: &u64) -> Result<(), DebugError> {
+    pub fn disable_breakpoint(&mut self, addr: &u64) -> Result<()> {
         let original_value = self.breakpoints.get(&addr);
         match original_value {
             Some(val) => {
                 self.write(&addr, *val)?;
                 self.breakpoints.remove(&addr);
             }
-            None => error!("Breakpoint not set"),
+            None => return Err(anyhow!("Breakpoint not set at 0x{:x}", addr)),
         }
         Ok(())
     }
