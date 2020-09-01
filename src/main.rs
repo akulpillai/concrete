@@ -14,7 +14,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("No Binary Provided");
+        eprintln!("USAGE: concrete <binary> <binary_arg1> ...");
         return Ok(());
     }
 
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
     let output_filename = args[1].clone() + ".cov";
     let mut output_file = File::create(&output_filename)?;
     for i in coverage.iter() {
-        output_file.write(format!("{:#x}\n", i).as_bytes())?;
+        output_file.write_all(format!("{:#x}\n", i).as_bytes())?;
     }
     println!("Output written to {}", output_filename);
     Ok(())
