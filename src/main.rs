@@ -1,11 +1,14 @@
 use anyhow::Result;
+use std::fs::File;
+use std::io::prelude::*;
 use std::env;
-
 // use nix::sys::wait::WaitStatus;
+//
 
+mod coverage;
 mod debugger;
 
-use debugger::Debugger;
+use coverage::Coverage;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -15,33 +18,16 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut dbg = Debugger::launch(&args[1], &args[2..])?;
+    let mut cov = Coverage::new(&args[1], &args[2..])?;
 
-    dbg.set_breakpoint(0x0000000000400c56)?;
-    dbg.unpause()?;
-    dbg.resume()?;
-
-    // let mut counter: usize = 0;
-    // loop {
-    //     counter += 1;
-    //     match dbg.step() {
-    //         Ok(WaitStatus::Exited(pid, _)) => {
-    //             println!("Process Exited {}", pid);
-    //             break;
-    //         }
-    //         Ok(WaitStatus::Stopped(_, _)) => {
-    //             continue;
-    //         }
-    //         Ok(status) => {
-    //             eprintln!("Interuppted by unexpected status: {:?}", status);
-    //             break;
-    //         }
-    //         Err(e) => {
-    //             eprintln!("Error while stepping: {}", e);
-    //         }
-    //     }
-    // }
-
-    // println!("Inscount {}", counter);
+    cov.set_marks(&args[1])?;
+    let coverage = cov.get_coverage()?;
+    println!("Hit {} Marks", coverage.len());
+    let output_filename = args[1].clone() + ".cov";
+    let mut output_file = File::create(&output_filename)?;
+    for i in coverage.iter() {
+        output_file.write(format!("{:#x}\n", i).as_bytes())?;
+    }
+    println!("Output written to {}", output_filename);
     Ok(())
 }

@@ -46,19 +46,21 @@ impl Debugger {
         // TODO: Don't care for the output
         let err = Command::new(prog)
             .args(progargs)
-            // .stdout(Stdio::null())
-            // .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .exec();
 
         // Function will only return if there is an error
         anyhow!("Execution Failed: {}", err)
     }
 
-    pub fn step(&self) -> Result<WaitStatus> {
-        ptrace::step(*self.pid(), None)?;
-        let status = waitpid(*self.pid(), None)?;
-        Ok(status)
-    }
+    // Step fuctionality implemented for testing
+
+    // pub fn step(&self) -> Result<WaitStatus> {
+    //     ptrace::step(*self.pid(), None)?;
+    //     let status = waitpid(*self.pid(), None)?;
+    //     Ok(status)
+    // }
 
     // To be only used the first time after attaching,
     // if breakpoints are hit call resume()
@@ -68,13 +70,14 @@ impl Debugger {
         Ok(status)
     }
 
-    pub fn resume(&mut self) -> Result<WaitStatus> {
+    // This disables the breakpoint and resumes
+    pub fn resume(&mut self) -> Result<(WaitStatus, u64)> {
         // Subtract RIP and unpause
         let mut regs = ptrace::getregs(*self.pid())?;
         regs.rip -= 1;
         self.disable_breakpoint(&regs.rip)?;
         ptrace::setregs(*self.pid(), regs)?;
-        Ok(self.unpause()?)
+        Ok((self.unpause()?, regs.rip as u64))
     }
 
     pub fn read(&self, addr: &u64) -> Result<u64> {
@@ -94,19 +97,27 @@ impl Debugger {
     }
 
     pub fn set_breakpoint(&mut self, addr: u64) -> Result<()> {
-        let original_value = self
-            .read(&addr)
-            .context("Failed to read at breakpoint address")?;
-        self.breakpoints.insert(addr, original_value);
-        self.write(&addr, original_value & 0xFFFFFFFFFFFFFF00 | 0xCC)?;
-        Ok(())
+        match self.breakpoints.get(&addr) {
+            Some(_) => Err(anyhow!("Breakpoint already exists")),
+            None => {
+                let original_value = self
+                    .read(&addr)
+                    .context("Failed to read at breakpoint address")?;
+                self.breakpoints.insert(addr, original_value);
+                self.write(&addr, original_value & 0xFFFFFFFFFFFFFF00 | 0xCC)?;
+                Ok(())
+            }
+        }
     }
 
     pub fn disable_breakpoint(&mut self, addr: &u64) -> Result<()> {
+        //failsafe incase multiple breakpoints in 8 bytes
+        let new_value = self.read(&addr)?;
         let original_value = self.breakpoints.get(&addr);
         match original_value {
             Some(val) => {
-                self.write(&addr, *val)?;
+                let write_value = new_value & 0xFFFFFFFFFFFFFF00 | (val & 0xFF);
+                self.write(&addr, write_value)?;
                 self.breakpoints.remove(&addr);
             }
             None => return Err(anyhow!("Breakpoint not set at 0x{:x}", addr)),
