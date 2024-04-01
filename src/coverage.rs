@@ -39,14 +39,29 @@ fn get_text_section(fname: &str) -> Result<TextSection> {
     })
 }
 
-fn init_capstone() -> CsResult<Capstone> {
-    let mut cs = Capstone::new()
-        .x86()
-        .mode(arch::x86::ArchMode::Mode64)
-        .build()?;
-    cs.set_detail(true)?;
+fn init_capstone(arch: Option<&str>) -> CsResult<Capstone> {
 
-    Ok(cs)
+    match arch {
+        Some("EM_X86_64") => {
+        let mut cs = Capstone::new()
+            .x86()
+            .mode(arch::x86::ArchMode::Mode64)
+            .build()?;
+        cs.set_detail(true)?;
+        return Ok(cs);
+        },
+        Some("EM_386") => {
+        let mut cs = Capstone::new()
+            .x86()
+            .mode(arch::x86::ArchMode::Mode32)
+            .build()?;
+        cs.set_detail(true)?;
+        return Ok(cs);
+        },
+        _ => {
+        return Err(capstone::Error::CustomError("Unsupported Architecture"));
+        }
+    }
 }
 
 fn is_cflow_group(g: u32) -> bool {
@@ -80,12 +95,12 @@ impl Coverage {
         let slice = file_data.as_slice();
         let elf_file = ElfBytes::<AnyEndian>::minimal_parse(slice).expect("Failed to open ELF file.");
 
-        let arch = elf_file.ehdr.e_machine;
+        let arch = elf::to_str::e_machine_to_str(elf_file.ehdr.e_machine);
 
-        println!("Arch: {:?}", elf::to_str::e_machine_to_str(arch));
+        info!("Arch: {:?}", arch);
         let text_section = get_text_section(&prog)?;
 
-        let cs = init_capstone().map_err(|_| anyhow!("Failed to init Capstone"))?;
+        let cs = init_capstone(arch).map_err(|_| anyhow!("Failed to init Capstone"))?;
 
         let insns = cs
             .disasm_all(&text_section.data, text_section.addr)
