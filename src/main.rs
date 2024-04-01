@@ -2,8 +2,6 @@ use anyhow::Result;
 use std::fs::File;
 use std::io::prelude::*;
 use std::env;
-// use nix::sys::wait::WaitStatus;
-//
 
 mod coverage;
 mod debugger;
@@ -11,6 +9,9 @@ mod debugger;
 use coverage::Coverage;
 
 fn main() -> Result<()> {
+
+    env_logger::init();
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {

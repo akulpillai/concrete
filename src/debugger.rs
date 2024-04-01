@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 // use std::ffi::{CString, CStr};
+use log::info;
 
 pub struct Debugger {
     pid: Pid,
@@ -15,18 +16,21 @@ pub struct Debugger {
 
 impl Debugger {
     pub fn launch(prog: &str, args: &[String]) -> Result<Debugger> {
-        match fork() {
-            Ok(ForkResult::Parent { child, .. }) => {
-                let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
-                let pid = wait_status.pid().unwrap(); //TODO: Fix this
-                Ok(Debugger {
-                    pid,
-                    breakpoints: HashMap::new(),
-                })
+        unsafe  {
+            match fork() {
+                Ok(ForkResult::Parent { child, .. }) => {
+                    let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
+                    let pid = wait_status.pid().unwrap(); //TODO: Fix this
+                    info!("Child pid: {:?}", pid);
+                    Ok(Debugger {
+                        pid,
+                        breakpoints: HashMap::new(),
+                    })
+                }
+                Ok(ForkResult::Child) => Err(Debugger::run_target(prog, args)),
+                Err(_) => Err(anyhow!("Fork failed")),
             }
-            Ok(ForkResult::Child) => Err(Debugger::run_target(prog, args)),
-            Err(_) => Err(anyhow!("Fork failed")),
-        }
+        }  
     }
 
     fn pid(&self) -> &Pid {
@@ -67,6 +71,7 @@ impl Debugger {
     pub fn unpause(&self) -> Result<WaitStatus> {
         ptrace::cont(*self.pid(), None)?;
         let status = waitpid(*self.pid(), None)?;
+        info!("Unpausing status: {:?}", status);
         Ok(status)
     }
 

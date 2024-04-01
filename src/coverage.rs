@@ -5,6 +5,9 @@ use capstone::prelude::*;
 use capstone::InsnGroupType::*;
 use nix::sys::wait::WaitStatus;
 use std::path::PathBuf;
+use elf::ElfBytes;
+use elf::endian::AnyEndian;
+use log::info;
 
 use anyhow::{anyhow, Result};
 
@@ -16,16 +19,23 @@ struct TextSection {
 
 fn get_text_section(fname: &str) -> Result<TextSection> {
     let path = PathBuf::from(fname);
-    let file = elf::File::open_path(&path).map_err(|_| anyhow!("Failed to open ELF"))?;
 
-    let section = match file.get_section(".text") {
+    let file_data = std::fs::read(path).expect("Could not read file.");
+    let slice = file_data.as_slice();
+    let file = ElfBytes::<AnyEndian>::minimal_parse(slice).expect("Failed to open ELF file.");
+
+    let section = match file.section_header_by_name(".text")? {
         Some(sec) => sec,
-        None => return Err(anyhow!("Failed to get .text section")),
+        None => return Err(anyhow!("No .text section found")),
     };
+
     Ok(TextSection {
-        addr: section.shdr.addr as u64,
+        addr: section.sh_addr as u64,
         // size: section.shdr.size as usize,
-        data: section.data.to_vec(),
+        data: match file.section_data(&section) {
+            Ok(data) => data.0.to_vec(),
+            Err(_) => return Err(anyhow!("Failed to get section data")),
+        },
     })
 }
 
@@ -64,6 +74,15 @@ impl Coverage {
     }
 
     pub fn set_marks(&mut self, prog: &str) -> Result<()> {
+        let path = PathBuf::from(prog);
+
+        let file_data = std::fs::read(path).expect("Could not read file.");
+        let slice = file_data.as_slice();
+        let elf_file = ElfBytes::<AnyEndian>::minimal_parse(slice).expect("Failed to open ELF file.");
+
+        let arch = elf_file.ehdr.e_machine;
+
+        println!("Arch: {:?}", elf::to_str::e_machine_to_str(arch));
         let text_section = get_text_section(&prog)?;
 
         let cs = init_capstone().map_err(|_| anyhow!("Failed to init Capstone"))?;
@@ -71,6 +90,7 @@ impl Coverage {
         let insns = cs
             .disasm_all(&text_section.data, text_section.addr)
             .map_err(|_| anyhow!("Failed to disassemble"))?;
+
         println!("Found {} instructions", insns.len());
         let mut push_next = true;
         let mut bb_no: usize = 0;
@@ -87,6 +107,7 @@ impl Coverage {
             let arch_detail: ArchDetail = detail.arch_detail();
             let ops = arch_detail.operands();
             if is_cflow_ins(&detail) {
+                info!("Instruction: {}", i);
                 push_next = true;
                 for op in ops {
                     if let ArchOperand::X86Operand(op) = op {
@@ -107,9 +128,6 @@ impl Coverage {
 
         println!("{} Marks Set", bb_no);
 
-        // dbg.set_breakpoint(0x0000000000400c56)?;
-        // dbg.unpause()?;
-        // dbg.resume()?;
         Ok(())
     }
 
