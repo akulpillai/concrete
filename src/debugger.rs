@@ -12,6 +12,7 @@ use log::info;
 pub struct Debugger {
     pid: Pid,
     breakpoints: HashMap<u64, u64>,
+    base_addr: u64,
 }
 
 impl Debugger {
@@ -20,17 +21,34 @@ impl Debugger {
             match fork() {
                 Ok(ForkResult::Parent { child, .. }) => {
                     let wait_status = waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
-                    let pid = wait_status.pid().unwrap(); //TODO: Fix this
+                    let pid = wait_status.pid().unwrap(); //TODO: Fix unwrap
                     info!("Child pid: {:?}", pid);
+                    //TODO: read proc maps and use it to rebase breakpoints
+                    let b_addr = 0; 
+                    info!("Base Address: 0x{:x}", b_addr);
                     Ok(Debugger {
                         pid,
                         breakpoints: HashMap::new(),
+                        base_addr: b_addr,
                     })
                 }
                 Ok(ForkResult::Child) => Err(Debugger::run_target(prog, args)),
                 Err(_) => Err(anyhow!("Fork failed")),
             }
         }  
+    }
+
+    pub fn retrive_base_addr(&self) -> u64 {
+        let maps_path = format!("/proc/{}/maps", self.pid);
+        let maps = std::fs::read_to_string(maps_path).expect("Failed to read maps");
+        let maps: Vec<&str> = maps.split("\n").collect();
+        let base_addr = maps[0].split("-").collect::<Vec<&str>>()[0];
+        let base_addr = u64::from_str_radix(base_addr, 16).expect("Failed to parse base address");
+        base_addr
+    }
+
+    pub fn set_base_addr(&mut self, addr: u64) {
+        self.base_addr = addr;
     }
 
     fn pid(&self) -> &Pid {
@@ -68,7 +86,7 @@ impl Debugger {
 
     // To be only used the first time after attaching,
     // if breakpoints are hit call resume()
-    pub fn unpause(&self) -> Result<WaitStatus> {
+    pub fn unpause(&mut self) -> Result<WaitStatus> {
         ptrace::cont(*self.pid(), None)?;
         let status = waitpid(*self.pid(), None)?;
         info!("Unpausing status: {:?}", status);
@@ -101,7 +119,8 @@ impl Debugger {
         Ok(())
     }
 
-    pub fn set_breakpoint(&mut self, addr: u64) -> Result<()> {
+    pub fn set_breakpoint(&mut self, mut addr: u64) -> Result<()> {
+        addr += self.base_addr;
         match self.breakpoints.get(&addr) {
             Some(_) => Err(anyhow!("Breakpoint already exists")),
             None => {

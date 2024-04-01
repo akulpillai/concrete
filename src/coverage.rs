@@ -43,23 +43,23 @@ fn init_capstone(arch: Option<&str>) -> CsResult<Capstone> {
 
     match arch {
         Some("EM_X86_64") => {
-        let mut cs = Capstone::new()
-            .x86()
-            .mode(arch::x86::ArchMode::Mode64)
-            .build()?;
-        cs.set_detail(true)?;
-        return Ok(cs);
+            let mut cs = Capstone::new()
+                .x86()
+                .mode(arch::x86::ArchMode::Mode64)
+                .build()?;
+            cs.set_detail(true)?;
+            return Ok(cs);
         },
         Some("EM_386") => {
-        let mut cs = Capstone::new()
-            .x86()
-            .mode(arch::x86::ArchMode::Mode32)
-            .build()?;
-        cs.set_detail(true)?;
-        return Ok(cs);
+            let mut cs = Capstone::new()
+                .x86()
+                .mode(arch::x86::ArchMode::Mode32)
+                .build()?;
+            cs.set_detail(true)?;
+            return Ok(cs);
         },
         _ => {
-        return Err(capstone::Error::CustomError("Unsupported Architecture"));
+            return Err(capstone::Error::CustomError("Unsupported Architecture"));
         }
     }
 }
@@ -96,8 +96,15 @@ impl Coverage {
         let elf_file = ElfBytes::<AnyEndian>::minimal_parse(slice).expect("Failed to open ELF file.");
 
         let arch = elf::to_str::e_machine_to_str(elf_file.ehdr.e_machine);
+        let pie = elf_file.ehdr.e_type == elf::abi::ET_DYN;
+
+        if pie {
+            let base_addr = self.dbg.retrive_base_addr();
+            self.dbg.set_base_addr(base_addr);
+        };
 
         info!("Arch: {:?}", arch);
+        info!("PIE: {:?}", pie);
         let text_section = get_text_section(&prog)?;
 
         let cs = init_capstone(arch).map_err(|_| anyhow!("Failed to init Capstone"))?;
