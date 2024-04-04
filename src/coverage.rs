@@ -136,8 +136,9 @@ impl Coverage {
                         if let X86OperandType::Imm(addr) = op.op_type {
                             if addr != 0 {
                                 //TODO: handle result
-                                if self.dbg.set_breakpoint(addr as u64).is_ok() {
-                                    bb_no += 1
+                                match self.dbg.set_breakpoint(addr as u64) {
+                                    Ok(_) => {bb_no += 1},
+                                    Err(_) => _,
                                 }
                             }
                         }
