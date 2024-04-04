@@ -98,7 +98,12 @@ impl Debugger {
         // Subtract RIP and unpause
         let mut regs = ptrace::getregs(*self.pid())?;
         regs.rip -= 1;
-        self.disable_breakpoint(&regs.rip)?;
+        match self.disable_breakpoint(&regs.rip) {
+            Ok(_) => {}
+            Err(e) => {
+                return Ok((self.unpause()?, regs.rip as u64));
+            }
+        }
         ptrace::setregs(*self.pid(), regs)?;
         Ok((self.unpause()?, regs.rip as u64))
     }

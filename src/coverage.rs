@@ -138,7 +138,7 @@ impl Coverage {
                                 //TODO: handle result
                                 match self.dbg.set_breakpoint(addr as u64) {
                                     Ok(_) => {bb_no += 1},
-                                    Err(_) => _,
+                                    Err(_) => {}
                                 }
                             }
                         }
