@@ -163,9 +163,15 @@ impl Coverage {
                     println!("Process Exited {}", pid);
                     break;
                 }
-                Ok((WaitStatus::Stopped(_, _), rip)) => {
+                Ok((WaitStatus::Stopped(_, sig), rip)) => {
+                    if (sig == nix::sys::signal::Signal::SIGSEGV) {
+                        break;
+                    }
                     cov.push(rip);
                     continue;
+                }
+                Ok((WaitStatus::Signaled(_, _, _), rip)) => {
+                    break;
                 }
                 Ok((status, _)) => {
                     return Err(anyhow!("Interuppted by unexpected status: {:?}", status))
