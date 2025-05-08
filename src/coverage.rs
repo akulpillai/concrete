@@ -136,8 +136,9 @@ impl Coverage {
                         if let X86OperandType::Imm(addr) = op.op_type {
                             if addr != 0 {
                                 //TODO: handle result
-                                if self.dbg.set_breakpoint(addr as u64).is_ok() {
-                                    bb_no += 1
+                                match self.dbg.set_breakpoint(addr as u64) {
+                                    Ok(_) => {bb_no += 1},
+                                    Err(_) => {}
                                 }
                             }
                         }
@@ -162,9 +163,15 @@ impl Coverage {
                     println!("Process Exited {}", pid);
                     break;
                 }
-                Ok((WaitStatus::Stopped(_, _), rip)) => {
+                Ok((WaitStatus::Stopped(_, sig), rip)) => {
+                    if (sig == nix::sys::signal::Signal::SIGSEGV) {
+                        break;
+                    }
                     cov.push(rip);
                     continue;
+                }
+                Ok((WaitStatus::Signaled(_, _, _), rip)) => {
+                    break;
                 }
                 Ok((status, _)) => {
                     return Err(anyhow!("Interuppted by unexpected status: {:?}", status))
